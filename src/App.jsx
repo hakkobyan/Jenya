@@ -16,9 +16,32 @@ function getBlockSlug(name, index) {
   return `${baseSlug}-${index + 1}`;
 }
 
-function getSlugFromLocation() {
-  const [, section, slug] = window.location.pathname.split("/");
-  return section === "div" ? slug ?? "" : "";
+function getFolderSlug(name, index) {
+  const baseSlug = slugify(name) || "folder";
+  return `${baseSlug}-${index + 1}`;
+}
+
+function getRouteFromLocation() {
+  const parts = window.location.pathname.split("/").filter(Boolean);
+
+  if (parts[0] === "div" && parts[1] && parts[2] === "folder" && parts[3]) {
+    return {
+      blockSlug: parts[1],
+      folderSlug: parts[3]
+    };
+  }
+
+  if (parts[0] === "div" && parts[1]) {
+    return {
+      blockSlug: parts[1],
+      folderSlug: ""
+    };
+  }
+
+  return {
+    blockSlug: "",
+    folderSlug: ""
+  };
 }
 
 export default function App() {
@@ -26,13 +49,15 @@ export default function App() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [modalMode, setModalMode] = useState("block");
-  const [activeSlug, setActiveSlug] = useState(getSlugFromLocation);
+  const [route, setRoute] = useState(getRouteFromLocation);
 
-  const selectedBlock = blocks.find((block) => block.slug === activeSlug) ?? null;
+  const selectedBlock = blocks.find((block) => block.slug === route.blockSlug) ?? null;
+  const selectedFolder =
+    selectedBlock?.folders.find((folder) => folder.slug === route.folderSlug) ?? null;
 
   useEffect(() => {
     function handlePopState() {
-      setActiveSlug(getSlugFromLocation());
+      setRoute(getRouteFromLocation());
     }
 
     window.addEventListener("popstate", handlePopState);
@@ -58,19 +83,83 @@ export default function App() {
     setIsModalOpen(true);
   }
 
+  function handleOpenTaskModal() {
+    if (!selectedBlock || !selectedFolder) {
+      return;
+    }
+
+    setDraftName("");
+    setModalMode("task");
+    setIsModalOpen(true);
+  }
+
   function handleCloseModal() {
     setDraftName("");
     setIsModalOpen(false);
   }
 
-  function openBlock(slug) {
-    window.history.pushState({}, "", `/div/${slug}`);
-    setActiveSlug(slug);
+  function openBlock(blockSlug) {
+    window.history.pushState({}, "", `/div/${blockSlug}`);
+    setRoute({
+      blockSlug,
+      folderSlug: ""
+    });
+  }
+
+  function openFolder(blockSlug, folderSlug) {
+    window.history.pushState({}, "", `/div/${blockSlug}/folder/${folderSlug}`);
+    setRoute({
+      blockSlug,
+      folderSlug
+    });
   }
 
   function goHome() {
     window.history.pushState({}, "", "/");
-    setActiveSlug("");
+    setRoute({
+      blockSlug: "",
+      folderSlug: ""
+    });
+  }
+
+  function goToBlock() {
+    if (!selectedBlock) {
+      goHome();
+      return;
+    }
+
+    openBlock(selectedBlock.slug);
+  }
+
+  function toggleTask(taskId) {
+    if (!selectedBlock || !selectedFolder) {
+      return;
+    }
+
+    setBlocks((currentBlocks) =>
+      currentBlocks.map((block) =>
+        block.slug === selectedBlock.slug
+          ? {
+              ...block,
+              folders: block.folders.map((folder) =>
+                folder.slug === selectedFolder.slug
+                  ? {
+                      ...folder,
+                      tasks: folder.tasks.map((task) =>
+                        task.id === taskId
+                          ? {
+                              ...task,
+                              done: !task.done
+                            }
+                          : task
+                      )
+                    }
+                  : folder
+              )
+            }
+          : block
+      )
+    );
   }
 
   function handleCreateBlock(event) {
@@ -103,9 +192,38 @@ export default function App() {
                   ...block.folders,
                   {
                     id: `${block.id}-folder-${block.folders.length}`,
-                    name: draftName.trim()
+                    name: draftName.trim(),
+                    slug: getFolderSlug(draftName.trim(), block.folders.length),
+                    tasks: []
                   }
                 ]
+              }
+            : block
+        )
+      );
+    }
+
+    if (modalMode === "task" && selectedBlock && selectedFolder) {
+      setBlocks((currentBlocks) =>
+        currentBlocks.map((block) =>
+          block.slug === selectedBlock.slug
+            ? {
+                ...block,
+                folders: block.folders.map((folder) =>
+                  folder.slug === selectedFolder.slug
+                    ? {
+                        ...folder,
+                        tasks: [
+                          ...folder.tasks,
+                          {
+                            id: `${folder.id}-task-${folder.tasks.length}`,
+                            text: draftName.trim(),
+                            done: false
+                          }
+                        ]
+                      }
+                    : folder
+                )
               }
             : block
         )
@@ -118,38 +236,101 @@ export default function App() {
   return (
     <>
       <main className="canvas">
-        {selectedBlock ? (
-          <section className="folders-panel">
-            <button className="back-button" type="button" onClick={goHome}>
-              Back
-            </button>
-
-            <div className="folders-header">
-              <div>
-                <p className="panel-label">Inside</p>
-                <h2 className="panel-title">{selectedBlock.name}</h2>
-              </div>
-              <button className="panel-button" type="button" onClick={handleOpenFolderModal}>
-                Add folder
+        {selectedBlock && selectedFolder ? (
+          <section className="detail-screen">
+            <header className="detail-header">
+              <button
+                className="back-icon-button"
+                type="button"
+                onClick={goToBlock}
+                aria-label="Go back"
+              >
+                &larr;
               </button>
-            </div>
+              <h1 className="detail-title">{selectedFolder.name}</h1>
+            </header>
 
-            <div className="folders-list">
-              {selectedBlock.folders.length > 0 ? (
-                selectedBlock.folders.map((folder) => (
-                  <div className="folder-chip" key={folder.id}>
-                    <span className="folder-icon" aria-hidden="true">
-                      +
-                    </span>
-                    <span>{folder.name}</span>
-                  </div>
-                ))
-              ) : (
-                <p className="empty-text">No folders yet. Add one like “Global tasks”.</p>
-              )}
+            <section className="folder-detail-card">
+              <p className="panel-label">To-do list</p>
+              <p className="folder-detail-parent">Inside {selectedBlock.name}</p>
+
+              <ul className="tasks-list">
+                {selectedFolder.tasks.length > 0 ? (
+                  selectedFolder.tasks.map((task) => (
+                    <li className="task-list-item" key={task.id}>
+                      <label className="task-row">
+                        <input
+                          className="task-checkbox"
+                          type="checkbox"
+                          checked={task.done}
+                          onChange={() => toggleTask(task.id)}
+                        />
+                        <span className={`task-text${task.done ? " is-done" : ""}`}>{task.text}</span>
+                      </label>
+                    </li>
+                  ))
+                ) : (
+                  <li className="empty-list-item">
+                    <p className="empty-text">No tasks yet. Add your first to-do item.</p>
+                  </li>
+                )}
+              </ul>
+            </section>
+
+            <p className="permalink-text">
+              Permalink: `/div/{selectedBlock.slug}/folder/{selectedFolder.slug}`
+            </p>
+
+            <button className="bottom-add-button" type="button" onClick={handleOpenTaskModal}>
+              Add task
+            </button>
+          </section>
+        ) : selectedBlock ? (
+          <section className="detail-screen">
+            <header className="detail-header">
+              <button className="back-icon-button" type="button" onClick={goHome} aria-label="Go back">
+                &larr;
+              </button>
+              <h1 className="detail-title">{selectedBlock.name}</h1>
+            </header>
+
+            <div className="folders-list-wrapper">
+              <p className="panel-label">Folders</p>
+
+              <ul className="folders-list">
+                {selectedBlock.folders.length > 0 ? (
+                  selectedBlock.folders.map((folder) => (
+                    <li className="folder-list-item" key={folder.id}>
+                      <button
+                        className="folder-row-button"
+                        type="button"
+                        onClick={() => openFolder(selectedBlock.slug, folder.slug)}
+                      >
+                        <span className="folder-row-left">
+                          <span className="folder-icon" aria-hidden="true">
+                            +
+                          </span>
+                          <span>{folder.name}</span>
+                        </span>
+                        <span className="folder-arrow" aria-hidden="true">
+                          &rsaquo;
+                        </span>
+                      </button>
+                    </li>
+                  ))
+                ) : (
+                  <li className="empty-list-item">
+                    <p className="empty-text">No folders yet. Add one like "Global tasks".</p>
+                  </li>
+                )}
+              </ul>
             </div>
 
             <p className="permalink-text">Permalink: `/div/{selectedBlock.slug}`</p>
+
+            <button className="bottom-add-button" type="button" onClick={handleOpenFolderModal}>
+              Add folder
+            </button>
           </section>
         ) : (
           <section className="blocks-grid">
@@ -162,16 +343,31 @@ export default function App() {
                   style={{ backgroundColor: block.color }}
                   onClick={() => openBlock(block.slug)}
                 >
-                  <span className="block-open-text">Open</span>
+                  <div className="block-content">
+                    {block.folders.length > 0 ? (
+                      <ul className="block-preview-list">
+                        {block.folders.slice(0, 3).map((folder) => (
+                          <li className="block-preview-item" key={folder.id}>
+                            {folder.name}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="block-preview-empty">No folders yet</p>
+                    )}
+                    <span className="block-open-text">Open</span>
+                  </div>
                 </button>
               </article>
             ))}
           </section>
         )}
 
-        <button className="add-button" type="button" onClick={handleOpenBlockModal}>
-          Add div
-        </button>
+        {selectedBlock ? null : (
+          <button className="add-button" type="button" onClick={handleOpenBlockModal}>
+            Add div
+          </button>
+        )}
       </main>
 
       {isModalOpen ? (
@@ -184,12 +380,20 @@ export default function App() {
             onClick={(event) => event.stopPropagation()}
           >
             <h2 className="modal-title" id="create-div-title">
-              {modalMode === "block" ? "Create div" : `Add folder to ${selectedBlock?.name ?? ""}`}
+              {modalMode === "block"
+                ? "Create div"
+                : modalMode === "folder"
+                  ? `Add folder to ${selectedBlock?.name ?? ""}`
+                  : `Add task to ${selectedFolder?.name ?? ""}`}
             </h2>
 
             <form className="modal-form" onSubmit={handleCreateBlock}>
               <label className="modal-label" htmlFor="div-name">
-                {modalMode === "block" ? "Div name" : "Folder name"}
+                {modalMode === "block"
+                  ? "Div name"
+                  : modalMode === "folder"
+                    ? "Folder name"
+                    : "Task name"}
               </label>
               <input
                 id="div-name"
